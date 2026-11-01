@@ -48,6 +48,10 @@ def create_app(settings: Settings | None = None):
         )
         if request.url.path.startswith(("/api/", "/internal/")):
             response.headers["Cache-Control"] = "no-store"
+        if request.url.path == "/" or request.url.path.endswith("index.html"):
+            response.headers["Cache-Control"] = "no-store"
+        elif request.url.path.endswith((".js", ".css")):
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     @app.exception_handler(InvalidToken)

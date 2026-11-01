@@ -414,8 +414,12 @@ async function init() {
     if (telegram?.initData) {
       telegram.ready();
       telegram.expand();
-      sessionToken = (await api("session", { init_data: telegram.initData }))
-        .session_token;
+      try {
+        sessionToken = (await api("session", { init_data: telegram.initData }))
+          .session_token;
+      } catch {
+        // A still-valid HttpOnly session can survive a WebView reload with older initData.
+      }
     }
     const me = await api("me");
     authorized = true;

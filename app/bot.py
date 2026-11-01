@@ -104,7 +104,7 @@ async def onboarding(message: Message, settings: Settings):
     )
     rows = [[InlineKeyboardButton(text="Попробовать роль организатора", callback_data="onboarding:review")]]
     if settings.public_url.startswith("https://"):
-        rows.append([InlineKeyboardButton(text="Открыть Mini App", web_app=WebAppInfo(url=settings.public_url + "/"))])
+        rows.append([InlineKeyboardButton(text="Открыть Mini App", web_app=WebAppInfo(url=settings.public_url + "/?v=shared-20261101"))])
     await message.answer_photo(
         FSInputFile(Path(__file__).parent / "static/assets/onboarding-methods.png"),
         caption=text,
@@ -163,7 +163,9 @@ async def organizer_guide(message: Message, settings: Settings):
     keyboard = None
     if settings.public_url.startswith("https://"):
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="Открыть сканер", web_app=WebAppInfo(url=settings.public_url + "/"))]]
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Открыть сканер", web_app=WebAppInfo(url=settings.public_url + "/?v=shared-20261101"))]
+            ]
         )
     await message.answer(
         "Отправьте фото QR, перешлите картинку или вставьте код GP1.…\n\nСначала откроется карточка гостя. Баллы начисляются только после нажатия кнопки «Отметить приход». Повторное нажатие их не добавит.",
