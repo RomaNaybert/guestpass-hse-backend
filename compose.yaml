@@ -1,0 +1,44 @@
+version: '2.4'
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: guestpass
+      POSTGRES_USER: guestpass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U guestpass -d guestpass']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    mem_limit: 256m
+  api:
+    build: .
+    image: guestpass-app:local
+    env_file: .env
+    ports:
+      - '127.0.0.1:8096:8080'
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://localhost:8080/health", timeout=3)']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    mem_limit: 320m
+  bot:
+    image: guestpass-app:local
+    command: ['python', '-m', 'app.bot']
+    env_file: .env
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 256m
+volumes:
+  postgres_data:

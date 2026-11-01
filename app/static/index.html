@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f3f1e8" />
+    <meta
+      name="description"
+      content="Персональные QR-пропуска и регистрация гостей на мероприятие."
+    />
+    <title>GuestPass — регистрация гостей</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <aside class="sidebar" aria-label="Навигация">
+      <a class="brand-icon" href="./" title="GuestPass"
+        ><img src="icons/qr-code.svg" alt="GuestPass"
+      /></a>
+      <nav>
+        <a class="rail-button active" href="#registration" title="Регистрация"
+          ><img src="icons/scan.svg" alt="Регистрация" /></a
+        ><a
+          class="rail-button help"
+          href="#how-it-works"
+          title="Как это работает"
+          ><img src="icons/info.svg" alt="Как это работает"
+        /></a>
+      </nav>
+      <div class="account">
+        <span class="avatar small" id="account-avatar">Г</span
+        ><span class="sr-only" id="account-name">GuestPass</span
+        ><span class="sr-only" id="account-role">Вход через Telegram</span
+        ><button
+          class="icon-button"
+          id="logout"
+          title="Выйти"
+          aria-label="Выйти"
+          hidden
+        >
+          <img src="icons/sign-out.svg" alt="" />
+        </button>
+      </div>
+    </aside>
+    <main id="registration">
+      <div class="topline">
+        <a class="brand" href="./">GuestPass</a
+        ><span class="event-pill" id="event-name">Встреча сообщества</span
+        ><span class="status" id="mode-label"><i></i>Регистрация открыта</span>
+      </div>
+      <header>
+        <p class="eyebrow">ОБЗОР СОБЫТИЯ</p>
+        <h1>Регистрация гостей</h1>
+        <img
+          class="welcome-badge"
+          src="assets/welcome-badge.png"
+          alt="Проходите!"
+        />
+      </header>
+      <div
+        class="notice"
+        id="notice"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></div>
+      <section class="stats" aria-label="Статистика мероприятия">
+        <div class="stat">
+          <strong id="registered">—</strong>
+          <p>ЗАРЕГИСТРИРОВАНО</p>
+        </div>
+        <div class="stat">
+          <strong id="checked-in">—</strong>
+          <p>УЖЕ НА МЕСТЕ</p>
+          <span class="sr-only" id="percentage">—</span>
+          <div class="sr-only" id="progress"></div>
+        </div>
+        <div class="stat">
+          <strong id="total-points">—</strong>
+          <p>НАЧИСЛЕНО БАЛЛОВ</p>
+        </div>
+      </section>
+      <section class="workspace">
+        <article class="scanner">
+          <div class="scanner-title">
+            <h2>Сканер пропусков</h2>
+            <span class="live"><i></i>LIVE</span>
+          </div>
+          <div class="tabs" role="tablist" aria-label="Способ сканирования">
+            <button
+              role="tab"
+              id="tab-camera"
+              aria-controls="pane-camera"
+              aria-selected="true"
+              data-mode="camera"
+            >
+              Камера</button
+            ><button
+              role="tab"
+              id="tab-photo"
+              aria-controls="pane-photo"
+              aria-selected="false"
+              data-mode="photo"
+            >
+              Фото QR</button
+            ><button
+              role="tab"
+              id="tab-code"
+              aria-controls="pane-code"
+              aria-selected="false"
+              data-mode="code"
+            >
+              Ввести код
+            </button>
+          </div>
+          <section
+            id="pane-camera"
+            class="scan-pane"
+            role="tabpanel"
+            aria-labelledby="tab-camera"
+          >
+            <div class="viewfinder">
+              <video id="camera" autoplay playsinline muted hidden></video>
+              <div class="camera-placeholder" id="camera-placeholder">
+                <img
+                  src="assets/scanner-ticket.png"
+                  alt="Декоративный бумажный пропуск в рамке сканера"
+                />
+              </div>
+            </div>
+            <p class="scan-caption">Наведите камеру на QR-пропуск.</p>
+            <button class="button primary" id="camera-button">
+              Включить камеру<img src="icons/arrow-right.svg" alt="" />
+            </button>
+            <p class="hint">Фото и код тоже подойдут.</p>
+          </section>
+          <section
+            id="pane-photo"
+            class="scan-pane"
+            role="tabpanel"
+            aria-labelledby="tab-photo"
+            hidden
+          >
+            <label class="upload-area" for="photo-input"
+              ><img src="icons/image.svg" alt="" /><strong
+                >Выберите фотографию QR</strong
+              ><span>JPG, PNG или WEBP · до 10 МБ</span
+              ><input
+                type="file"
+                id="photo-input"
+                accept="image/png,image/jpeg,image/webp"
+            /></label>
+            <p class="scan-caption">QR должен целиком помещаться в кадре.</p>
+            <button class="button primary" id="photo-button" disabled>
+              Распознать пропуск
+            </button>
+            <p class="hint" id="photo-name">
+              Фото можно переслать прямо в Telegram-бота.
+            </p>
+          </section>
+          <section
+            id="pane-code"
+            class="scan-pane code-pane"
+            role="tabpanel"
+            aria-labelledby="tab-code"
+            hidden
+          >
+            <label for="token-input">Персональный код гостя</label
+            ><textarea
+              id="token-input"
+              placeholder="GP1.…"
+              spellcheck="false"
+              maxlength="1000"
+            ></textarea>
+            <p class="scan-caption">
+              Скопируйте код из сообщения Telegram-бота.
+            </p>
+            <button class="button primary" id="code-button">Найти гостя</button>
+            <p class="hint">Если камера не распознала QR.</p>
+          </section>
+          <div class="access-note" id="access-note">
+            <a class="bot-link" id="bot-link" href="#"
+              >Открыть Telegram-бота<img src="icons/arrow-up-right.svg" alt=""
+            /></a>
+            <p>
+              Гостям — команда /start. Организаторам — /organizer. Проверяющим —
+              /review.
+            </p>
+            <a href="?demo=1" class="demo-link">Посмотреть пример интерфейса</a>
+          </div>
+        </article>
+        <article class="guest" id="guest-card" aria-live="polite">
+          <div class="ticket-top">
+            <p class="eyebrow">ПЕРСОНАЛЬНЫЙ ПРОПУСК</p>
+            <span class="serial" id="guest-serial"># —</span>
+          </div>
+          <p class="guest-category" id="guest-category">ГОСТЬ</p>
+          <div class="guest-identity">
+            <h2 id="guest-name">Ждём<br />вашего гостя</h2>
+            <span class="avatar" id="guest-avatar">?</span>
+          </div>
+          <span class="guest-status" id="guest-status">Ожидаем QR-код</span>
+          <div class="ticket-perforation"></div>
+          <div class="guest-values">
+            <div>
+              <p>БАЛЛЫ</p>
+              <strong id="guest-points">—</strong>
+            </div>
+            <div>
+              <p>ПРИХОД</p>
+              <strong class="attendance" id="guest-arrival">Не отмечен</strong>
+            </div>
+          </div>
+          <div class="ticket-action">
+            <button class="button accent" id="check-in-button" disabled>
+              Отметить приход · +10
+            </button>
+            <p class="guest-footnote">Один приход — одно начисление.</p>
+          </div>
+          <div class="history" id="history" hidden>
+            <h3>История начислений</h3>
+            <ul id="history-list"></ul>
+          </div>
+          <section
+            class="steps"
+            id="how-it-works"
+            aria-label="Как это работает"
+          >
+            <div>
+              <span>01</span>
+              <p>QR В TELEGRAM</p>
+            </div>
+            <div>
+              <span>02</span>
+              <p>СКАН НА ВХОДЕ</p>
+            </div>
+            <div>
+              <span>03</span>
+              <p>БАЛЛЫ В ИСТОРИИ</p>
+            </div>
+          </section>
+        </article>
+      </section>
+      <footer>
+        <a href="?demo=1">Пример интерфейса</a
+        ><span>СДЕЛАНО ДЛЯ ЖИВЫХ ВСТРЕЧ.</span>
+      </footer>
+    </main>
+  </body>
+</html>
