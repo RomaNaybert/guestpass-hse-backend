@@ -17,6 +17,7 @@ class Settings:
     api_url: str = "http://api:8080"
     cookie_secure: bool = False
     bot_username: str = ""
+    review_enabled: bool = True
 
     @classmethod
     def from_env(cls):
@@ -38,6 +39,7 @@ class Settings:
             api_url=os.environ.get("API_URL", "http://api:8080").rstrip("/"),
             cookie_secure=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
             bot_username=os.environ.get("BOT_USERNAME", ""),
+            review_enabled=os.environ.get("REVIEW_ENABLED", "true").lower() == "true",
         )
         if not 1 <= settings.check_in_points <= 10000 or not 1 <= settings.pass_ttl_days <= 365:
             raise ValueError("Invalid points or pass lifetime")

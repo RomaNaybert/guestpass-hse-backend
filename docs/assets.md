@@ -15,3 +15,5 @@
 Шрифты: **Manrope** и **Roboto Condensed**, SIL Open Font License 1.1. Источники: https://github.com/google/fonts/tree/main/ofl/manrope и https://github.com/google/fonts/tree/main/ofl/robotocondensed . Сохранены локально в `app/static/fonts/`.
 
 Тексты лицензий находятся в `app/static/licenses/`.
+
+Онбординг (`onboarding-methods.png`, `onboarding-review.png`) и фон персонального билета (`pass-template.png`) созданы ImageGen по запросам пользователя. Реальный QR и имя добавляются программой, а не генератором изображения.

@@ -1430,3 +1430,7 @@ footer > a {
     line-height: 1.5;
   }
 }
+
+.guest {
+  scroll-margin-top: 16px;
+}

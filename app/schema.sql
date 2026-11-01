@@ -31,7 +31,10 @@ CREATE TABLE IF NOT EXISTS point_entries (
 CREATE INDEX IF NOT EXISTS point_entries_guest_history ON point_entries (guest_id, created_at);
 CREATE TABLE IF NOT EXISTS review_spaces (
     actor_telegram_id bigint PRIMARY KEY CHECK (actor_telegram_id > 0),
-    event_id uuid NOT NULL UNIQUE REFERENCES events(id),
+    event_id uuid NOT NULL REFERENCES events(id),
     active boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Upgrade the early private-sandbox schema to one shared demonstration event.
+ALTER TABLE review_spaces DROP CONSTRAINT IF EXISTS review_spaces_event_id_key;

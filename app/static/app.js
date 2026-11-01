@@ -62,6 +62,12 @@ function stats(values) {
 }
 function showGuest(guest) {
   currentGuest = guest;
+  if (guest.event_name) $("event-name").textContent = guest.event_name;
+  if (typeof guest.review_mode === "boolean") {
+    $("mode-label").textContent = guest.review_mode
+      ? "Общее демомероприятие"
+      : "Основное мероприятие";
+  }
   $("guest-name").textContent = guest.name;
   $("guest-avatar").textContent = initials(guest.name);
   $("guest-category").textContent = guest.category;
@@ -100,6 +106,24 @@ function showGuest(guest) {
     );
     $("history-list").append(li);
   }
+}
+function revealScannedGuest(guest) {
+  showGuest(guest);
+  if (!demo)
+    api("stats")
+      .then(stats)
+      .catch(() => {});
+  if (!window.matchMedia("(max-width: 750px)").matches) return;
+  // Wait for the updated card and stopped video to take their final height.
+  requestAnimationFrame(() => {
+    $("guest-name").focus({ preventScroll: true });
+    $("guest-card").scrollIntoView({
+      block: "start",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+  });
 }
 function stopCamera() {
   if (timer) clearTimeout(timer);
@@ -154,9 +178,9 @@ function access() {
 }
 async function scanToken(token) {
   const guest = await api("scan", { token: token.trim() });
-  showGuest(guest);
   $("notice").hidden = true;
   stopCamera();
+  revealScannedGuest(guest);
 }
 $("code-button").addEventListener("click", async () => {
   if (!access()) return;
@@ -208,8 +232,8 @@ $("photo-button").addEventListener("click", async () => {
     const guest = await api("scan-photo", {
       image_base64: await imageBase64(file),
     });
-    showGuest(guest);
     $("notice").hidden = true;
+    revealScannedGuest(guest);
   } catch (error) {
     notice(error.message, true);
   } finally {
@@ -270,8 +294,8 @@ $("camera-button").addEventListener("click", async () => {
             const guest = await api("scan-photo", {
               image_base64: canvas.toDataURL("image/jpeg", 0.85).split(",")[1],
             });
-            showGuest(guest);
             stopCamera();
+            revealScannedGuest(guest);
           }
         }
       } catch (error) {
@@ -297,6 +321,14 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopCamera();
 });
 window.addEventListener("pagehide", stopCamera);
+function refreshCounters() {
+  if (authorized && !demo && !document.hidden)
+    api("stats")
+      .then(stats)
+      .catch(() => {});
+}
+setInterval(refreshCounters, 5000);
+window.addEventListener("focus", refreshCounters);
 $("check-in-button").addEventListener("click", async () => {
   if (!currentGuest) return;
   const button = $("check-in-button");
@@ -394,9 +426,9 @@ async function init() {
     $("logout").hidden = false;
     $("event-name").textContent = me.event_name;
     if (me.review_mode) {
-      $("mode-label").textContent = "Личный стенд проверки";
+      $("mode-label").textContent = "Общее демомероприятие";
       notice(
-        "Вы проверяете роль организатора на личном стенде. Здесь только тестовые гости.",
+        "Общий демостенд: здесь видны регистрации всех участников. /start в боте выдаёт каждому персональный QR.",
       );
     }
     stats(await api("stats"));

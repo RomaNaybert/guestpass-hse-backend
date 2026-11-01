@@ -41,6 +41,7 @@ def service(settings):
             conn.execute("DELETE FROM point_entries WHERE event_id=%s", (event["id"],))
             conn.execute("DELETE FROM guests WHERE event_id=%s", (event["id"],))
             conn.execute("DELETE FROM events WHERE id=%s", (event["id"],))
+        conn.execute("DELETE FROM review_spaces WHERE event_id=%s", (svc.event_id,))
         conn.execute("DELETE FROM point_entries WHERE event_id=%s", (svc.event_id,))
         conn.execute("DELETE FROM guests WHERE event_id=%s", (svc.event_id,))
         conn.execute("DELETE FROM events WHERE id=%s", (svc.event_id,))
@@ -126,28 +127,19 @@ def test_api_auth_and_checkin(settings):
             conn.execute("DELETE FROM events WHERE id=%s", (service.event_id,))
 
 
-def test_reviewers_are_isolated_from_each_other_and_real_guests(service):
-    main_guest = service.register(777, "Настоящий гость")
-    main_token = service.pass_for(777)
+def test_reviewers_share_event_and_new_registrations(service):
+    service.register(777, "Петров Иван")
     first = service.start_review(999)
     second = service.start_review(888)
-    first_scope = service.context_for(999)
-    second_scope = service.context_for(888)
-    card = first_scope.scan(first["guests"][0]["token"])
-    assert first_scope.check_in(card["id"], 999)["awarded"] is True
-    assert first_scope.check_in(card["id"], 999)["awarded"] is False
-    with pytest.raises(InvalidToken):
-        first_scope.scan(second["guests"][0]["token"])
-    with pytest.raises(InvalidToken):
-        first_scope.scan(main_token)
-    with pytest.raises(LookupError):
-        first_scope.check_in(main_guest["id"], 999)
-    with pytest.raises(LookupError):
-        second_scope.check_in(card["id"], 888)
-    assert service.card(main_guest["id"])["points"] == 0
-    assert service.stats()["points"] == 0
-    assert second_scope.stats()["points"] == 0
-    assert first_scope.stats()["points"] == 10
+    assert first["guests"][0]["token"] == second["guests"][0]["token"]
+    assert service.context_for(999).stats()["registered"] == 3
+    service.register(778, "Соколова Анна")
+    assert service.context_for(888).stats()["registered"] == 4
+    card = service.scan_for(999, service.pass_for(778))
+    assert card["name"] == "Соколова Анна"
+    assert service.check_in_for(card["id"], 999)["awarded"] is True
+    assert service.check_in_for(card["id"], 888)["awarded"] is False
+    assert service.context_for(888).stats()["points"] == 10
 
 
 def test_review_permissions_are_persistent_and_can_be_left(service, settings):
@@ -190,3 +182,40 @@ def test_reviewer_photo_decoding_and_award_via_real_api(settings):
             conn.execute("DELETE FROM point_entries WHERE event_id=%s", (scoped.event_id,))
             conn.execute("DELETE FROM guests WHERE event_id=%s", (scoped.event_id,))
             conn.execute("DELETE FROM events WHERE id IN (%s,%s)", (scoped.event_id, app.state.service.event_id))
+
+
+def test_organizer_scans_any_registered_participant_after_review(service):
+    first = service.register(777, "Петров Иван")
+    service.start_review(123)
+    service.start_review(999)
+    card = service.scan_for(123, service.pass_for(777))
+    assert card["name"] == "Петров Иван"
+    assert service.check_in_for(first["id"], 123)["awarded"] is True
+    assert service.check_in_for(first["id"], 999)["awarded"] is False
+    assert service.registration_for(777) == {"registered": True, "name": "Петров Иван"}
+    assert service.registration_for(777777)["registered"] is False
+
+
+def test_closed_event_disables_self_service_review(service, settings):
+    service.start_review(999)
+    service.settings = replace(settings, review_enabled=False)
+    with pytest.raises(PermissionError):
+        service.start_review(888)
+    with pytest.raises(PermissionError):
+        service.context_for(999)
+    assert service.context_for(123).event_id == service.event_id
+
+
+def test_old_synthetic_review_ticket_maps_to_shared_guest(service):
+    old_id = uuid4()
+    with service.pool.connection() as conn:
+        conn.execute("INSERT INTO events(id,slug,name) VALUES(%s,%s,'Legacy demo')", (old_id, f"review-{service.event_id}-legacy"))
+    old = service.scoped(old_id, "Legacy demo", 999)
+    old.register(1, "Анна Кузнецова")
+    old_token = old.pass_for(1)
+    service.start_review(999)
+    current = service.scan_for(999, old_token)
+    assert current["name"] == "Анна Кузнецова"
+    assert service.check_in_for(current["id"], 999)["awarded"] is True
+    canonical = service.start_review(888)["guests"][0]["token"]
+    assert service.scan_for(888, canonical)["points"] == 10

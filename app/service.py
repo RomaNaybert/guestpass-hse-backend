@@ -40,6 +40,37 @@ class GuestService:
             ).fetchone()
         return self.card(row["id"])
 
+    def registration_for(self, telegram_id: int):
+        with self.pool.connection() as conn:
+            row = conn.execute("SELECT name FROM guests WHERE event_id=%s AND telegram_id=%s", (self.event_id, telegram_id)).fetchone()
+        return {"registered": bool(row), "name": row["name"] if row else None}
+
+    def legacy_guest(self, guest_id: UUID):
+        # Old private review tickets contain only synthetic guests. Resolve them to the shared demo guests.
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT guests.* FROM guests JOIN events ON events.id=guests.event_id WHERE guests.id=%s AND events.slug LIKE %s AND guests.telegram_id IN (1,2)",
+                (guest_id, f"review-{self.event_id}-%"),
+            ).fetchone()
+            if not row:
+                return None
+            canonical = conn.execute(
+                "SELECT id FROM guests WHERE event_id=%s AND telegram_id=%s", (self.event_id, row["telegram_id"])
+            ).fetchone()
+        return (row, canonical["id"]) if canonical else None
+
+    def scan_for(self, actor_id: int, token: str):
+        scoped = self.context_for(actor_id)
+        card = scoped.scan(token)
+        return {**card, "review_mode": self.profile_for(actor_id)["review_mode"]}
+
+    def check_in_for(self, guest_id: UUID, actor_id: int):
+        scoped = self.context_for(actor_id)
+        legacy = self.legacy_guest(guest_id) if self.settings.review_enabled else None
+        result = scoped.check_in(legacy[1] if legacy else guest_id, actor_id)
+        result["guest"]["review_mode"] = self.profile_for(actor_id)["review_mode"]
+        return result
+
     def pass_for(self, telegram_id: int):
         with self.pool.connection() as conn:
             row = conn.execute("SELECT * FROM guests WHERE event_id=%s AND telegram_id=%s", (self.event_id, telegram_id)).fetchone()
@@ -52,7 +83,12 @@ class GuestService:
     def scan(self, token: str):
         claims = verify_pass(token.strip(), self.settings.signing_key)
         if claims.event_id != self.event_id:
-            raise InvalidToken("Пропуск другого мероприятия")
+            legacy = self.legacy_guest(claims.guest_id) if self.settings.review_enabled else None
+            if not legacy or legacy[0]["event_id"] != claims.event_id:
+                raise InvalidToken("Пропуск другого мероприятия")
+            if legacy[0]["pass_nonce"] != claims.nonce or legacy[0]["pass_expires"] != claims.expires:
+                raise InvalidToken("Пропуск отозван или не найден")
+            return self.card(legacy[1])
         with self.pool.connection() as conn:
             row = conn.execute(
                 "SELECT pass_nonce,pass_expires FROM guests WHERE id=%s AND event_id=%s", (claims.guest_id, self.event_id)
@@ -116,43 +152,38 @@ class GuestService:
 
     def context_for(self, actor_id: int):
         with self.pool.connection() as conn:
-            row = conn.execute(
-                """SELECT events.id,events.name FROM review_spaces JOIN events ON events.id=review_spaces.event_id
-                   WHERE actor_telegram_id=%s AND active=true""",
-                (actor_id,),
-            ).fetchone()
-        if row:
-            return self.scoped(row["id"], row["name"], actor_id)
+            row = conn.execute("SELECT active FROM review_spaces WHERE actor_telegram_id=%s", (actor_id,)).fetchone()
+        if self.settings.review_enabled and row and row["active"]:
+            return self.scoped(self.event_id, self.settings.event_name, actor_id)
         if actor_id in self.settings.organizer_ids:
             return self
         raise PermissionError("Нет доступа организатора. Для проверки отправьте боту /review")
 
     def profile_for(self, actor_id: int):
-        scoped = self.context_for(actor_id)
-        return {"organizer_id": actor_id, "review_mode": scoped.event_id != self.event_id, "event_name": scoped.settings.event_name}
+        self.context_for(actor_id)
+        with self.pool.connection() as conn:
+            row = conn.execute("SELECT active FROM review_spaces WHERE actor_telegram_id=%s", (actor_id,)).fetchone()
+        return {
+            "organizer_id": actor_id,
+            "review_mode": bool(self.settings.review_enabled and row and row["active"]),
+            "event_name": self.settings.event_name,
+        }
 
     def start_review(self, actor_id: int):
-        if actor_id <= 0:
-            raise PermissionError("Некорректный пользователь")
+        if actor_id <= 0 or not self.settings.review_enabled:
+            raise PermissionError("Публичная проверка отключена. Доступ есть только у организаторов")
         with self.pool.connection() as conn:
-            event = conn.execute(
-                """INSERT INTO events(id,slug,name) VALUES(%s,%s,%s)
-                   ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name RETURNING id,name""",
-                (uuid4(), f"review-{self.event_id}-{actor_id}", "Личный стенд проверки"),
-            ).fetchone()
             conn.execute(
-                """INSERT INTO review_spaces(actor_telegram_id,event_id,active) VALUES(%s,%s,true)
-                ON CONFLICT(actor_telegram_id) DO UPDATE SET active=true,event_id=EXCLUDED.event_id""",
-                (actor_id, event["id"]),
+                "INSERT INTO review_spaces(actor_telegram_id,event_id,active) VALUES(%s,%s,true) ON CONFLICT(actor_telegram_id) DO UPDATE SET active=true,event_id=EXCLUDED.event_id",
+                (actor_id, self.event_id),
             )
-        scoped = self.context_for(actor_id)
         guests = []
         for test_id, name in [(1, "Анна Кузнецова"), (2, "Михаил Соколов")]:
-            card = scoped.register(test_id, name)
+            card = self.register(test_id, name)
             with self.pool.connection() as conn:
-                conn.execute("UPDATE guests SET category='Тестовый гость' WHERE event_id=%s AND id=%s", (scoped.event_id, card["id"]))
-            guests.append({"name": name, "token": scoped.pass_for(test_id)})
-        return {"event_name": scoped.settings.event_name, "guests": guests}
+                conn.execute("UPDATE guests SET category='Тестовый гость' WHERE event_id=%s AND id=%s", (self.event_id, card["id"]))
+            guests.append({"name": name, "token": self.pass_for(test_id)})
+        return {"event_name": self.settings.event_name, "guests": guests}
 
     def leave_review(self, actor_id: int):
         with self.pool.connection() as conn:

@@ -18,8 +18,6 @@ idna==3.20
 iniconfig==2.3.1
 magic-filter==1.0.12
 multidict==7.2.1
-numpy==2.5.4
-opencv-python-headless==4.14.0.94
 opentelemetry-api==1.45.2
 packaging==26.3
 pillow==13.0.0
@@ -39,3 +37,4 @@ typing-inspection==0.4.4
 typing_extensions==4.16.0
 uvicorn==0.54.0
 yarl==1.25.1
+zxing-cpp==3.1.1

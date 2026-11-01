@@ -2,17 +2,24 @@ import asyncio
 import html
 import logging
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo, FSInputFile
 
 from app.config import Settings
-from app.qr import MAX_IMAGE_BYTES, make_qr, read_qr
+from app.qr import MAX_IMAGE_BYTES, make_pass_image, read_qr
 from app.security import InvalidToken
 
 router = Router()
+
+
+class Registration(StatesGroup):
+    name = State()
 
 
 class ApiError(ValueError):
@@ -39,9 +46,7 @@ class Backend:
 
 def card_text(card):
     status = "Уже отмечен" if card["checked_in"] else "Ещё не отмечен"
-    text = (
-        f"<b>{html.escape(card['name'])}</b>\nКатегория: {html.escape(card['category'])}\nБаллы: <b>{card['points']}</b>\nПриход: {status}"
-    )
+    text = f"<b>{html.escape(card['name'])}</b>\n{html.escape(card['event_name'])}\nКатегория: {html.escape(card['category'])}\nБаллы: <b>{card['points']}</b>\nПриход: {status}"
     for entry in card["history"][:5]:
         text += f"\n\n+{entry['amount']} · {html.escape(entry['reason'])}\n{html.escape(entry['created_at'])} · организатор {entry['actor_telegram_id']}"
     return text
@@ -66,22 +71,54 @@ async def allowed(message, backend):
 
 
 @router.message(CommandStart())
-async def start(message: Message, backend: Backend, settings: Settings):
+async def start(message: Message, backend: Backend, settings: Settings, state: FSMContext):
     if message.chat.type != "private":
         return
+    await state.clear()
     if message.text and message.text.split(maxsplit=1)[-1] == "review":
         await review(message, backend, settings)
         return
     try:
-        await backend.request(
-            "POST", "/internal/register", json={"telegram_id": message.from_user.id, "name": message.from_user.full_name[:100]}
-        )
-        await message.answer(
-            f"Вы зарегистрированы на «{settings.event_name}».\n\n/qr — персональный пропуск\n/id — ваш Telegram ID\n/organizer — панель организатора\n/review — проверить весь сценарий на личном тестовом стенде\n\nПокажите QR на входе. Персональный пропуск не стоит пересылать другим людям."
-        )
-        await send_qr(message, backend, settings)
+        await onboarding(message, settings)
+        registration = await backend.request("GET", f"/internal/registration/{message.from_user.id}")
+        if registration["registered"]:
+            # Re-registering the same saved name only renews an expired pass.
+            await backend.request("POST", "/internal/register", json={"telegram_id": message.from_user.id, "name": registration["name"]})
+            await send_qr(message, backend, settings)
+        else:
+            await state.set_state(Registration.name)
+            await message.answer("Как вас записать на мероприятие? Напишите фамилию и имя одним сообщением. Например: Петров Иван.")
     except ApiError as exc:
         await message.answer(str(exc))
+
+
+async def onboarding(message: Message, settings: Settings):
+    text = (
+        "Добро пожаловать в GuestPass! Здесь можно получить пропуск и проверить регистрацию гостей.\n\n"
+        "Организатор может проверить гостя двумя способами:\n"
+        "• Сфотографировать QR обычной камерой и отправить фото прямо в этот чат. Можно и переслать картинку: бот сам распознает её.\n"
+        "• Открыть Mini App кнопкой GuestPass в меню бота: там есть камера, загрузка фото и ввод кода.\n\n"
+        "Нет возможности отправить фото? Вставьте текстовый код GP1.… из сообщения с пропуском.\n\n"
+        "Проверяете задание? Нажмите кнопку ниже или отправьте /review. Откроете общее демомероприятие и получите два тестовых QR. Имена участников видны другим проверяющим. Можно открыть QR на компьютере и сфотографировать его телефоном.\n\n"
+        "Скан открывает карточку. Баллы добавляются только кнопкой «Отметить приход», один раз."
+    )
+    rows = [[InlineKeyboardButton(text="Попробовать роль организатора", callback_data="onboarding:review")]]
+    if settings.public_url.startswith("https://"):
+        rows.append([InlineKeyboardButton(text="Открыть Mini App", web_app=WebAppInfo(url=settings.public_url + "/"))])
+    await message.answer_photo(
+        FSInputFile(Path(__file__).parent / "static/assets/onboarding-methods.png"),
+        caption=text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@router.callback_query(F.data == "onboarding:review")
+async def onboarding_review(query: CallbackQuery, backend: Backend, settings: Settings, state: FSMContext | None = None):
+    if not query.message or query.message.chat.type != "private":
+        await query.answer("Откройте личный чат с ботом", show_alert=True)
+        return
+    await query.answer()
+    await review(query.message, backend, settings, actor_id=query.from_user.id, state=state)
 
 
 @router.message(Command("id"))
@@ -96,7 +133,12 @@ async def send_qr(message: Message, backend: Backend, settings: Settings):
         return
     try:
         data = await backend.request("GET", f"/internal/pass/{message.from_user.id}")
-        png = await asyncio.to_thread(make_qr, data["token"])
+        png = await asyncio.to_thread(
+            make_pass_image,
+            data["token"],
+            (await backend.request("GET", f"/internal/registration/{message.from_user.id}"))["name"] or message.from_user.full_name,
+            settings.event_name,
+        )
         await message.answer_photo(
             BufferedInputFile(png, filename="guest-pass.png"),
             caption=f"{settings.event_name}\nВаш персональный пропуск. Покажите QR на входе.",
@@ -110,8 +152,14 @@ async def send_qr(message: Message, backend: Backend, settings: Settings):
 @router.message(Command("organizer"))
 async def organizer(message: Message, backend: Backend, settings: Settings):
     if not await allowed(message, backend):
-        await message.answer("Этот раздел доступен организаторам. Для проверки задания отправьте /review — получите личный тестовый стенд.")
+        await message.answer(
+            "Этот раздел доступен организаторам. Для проверки задания отправьте /review — получите роль организатора демомероприятия."
+        )
         return
+    await organizer_guide(message, settings)
+
+
+async def organizer_guide(message: Message, settings: Settings):
     keyboard = None
     if settings.public_url.startswith("https://"):
         keyboard = InlineKeyboardMarkup(
@@ -124,22 +172,28 @@ async def organizer(message: Message, backend: Backend, settings: Settings):
 
 
 @router.message(Command("review"))
-async def review(message: Message, backend: Backend, settings: Settings):
+async def review(message: Message, backend: Backend, settings: Settings, actor_id: int | None = None, state: FSMContext | None = None):
     if message.chat.type != "private":
         return
+    if state:
+        await state.clear()
     try:
-        result = await backend.request("POST", "/internal/review", json={"actor_id": message.from_user.id})
+        result = await backend.request("POST", "/internal/review", json={"actor_id": actor_id or message.from_user.id})
+        await message.answer_photo(
+            FSInputFile(Path(__file__).parent / "static/assets/onboarding-review.png"),
+            caption="Общее демомероприятие: откройте QR на компьютере и сфотографируйте телефоном. Фото можно отправить в этот чат или распознать в Mini App. Код GP1.… тоже работает.",
+        )
         await message.answer(
-            "Открыт ваш личный тестовый стенд. Ниже — два QR вымышленных гостей. Перешлите любое из этих фото обратно боту или скопируйте код: появится карточка и кнопка начисления. Повторите действие, чтобы проверить защиту от повторных баллов.\n\n/organizer — открыть веб-сканер\n/event — выйти из тестового режима\n\nНачисления сохраняются только на вашем стенде. Другие проверяющие и реальные гости от них не зависят."
+            "Вы организатор общего демомероприятия. Здесь видны все зарегистрированные через /start участники. Ниже — два QR вымышленных гостей для первого теста. Перешлите любое из этих фото обратно боту или скопируйте код: появится карточка и кнопка начисления. Повторите действие, чтобы проверить защиту от повторных баллов.\n\n/organizer — открыть веб-сканер\n/event — выйти из тестового режима\n\nСчётчики общие для всех аккаунтов. Каждый новый участник увеличивает число регистраций. Повторное сканирование одним или разными организаторами не добавляет баллы второй раз."
         )
         for guest in result["guests"]:
-            png = await asyncio.to_thread(make_qr, guest["token"])
+            png = await asyncio.to_thread(make_pass_image, guest["token"], guest["name"], "Общее демомероприятие")
             await message.answer_photo(
                 BufferedInputFile(png, filename="review-qr.png"),
                 caption=f"Тестовый гость: {guest['name']}\nПерешлите это фото обратно в этот чат.",
             )
             await message.answer(f"<code>{html.escape(guest['token'])}</code>", parse_mode="HTML")
-        await organizer(message, backend, settings)
+        await organizer_guide(message, settings)
     except ApiError as exc:
         await message.answer(str(exc))
 
@@ -149,7 +203,9 @@ async def leave_review(message: Message, backend: Backend):
     if message.chat.type == "private":
         try:
             await backend.request("POST", "/internal/leave-review", json={"actor_id": message.from_user.id})
-            await message.answer("Тестовый режим выключен. /qr — ваш пропуск на основную встречу; /review — вернуться к проверке.")
+            await message.answer(
+                "Роль проверяющего выключена. /qr — ваш пропуск на основную встречу; /review — получить роль организатора."
+            )
         except ApiError as exc:
             await message.answer(str(exc))
 
@@ -174,6 +230,40 @@ async def photo(message: Message, bot: Bot, backend: Backend, settings: Settings
         token = await asyncio.to_thread(read_qr, buffer.getvalue())
         await show_card(message, token, backend, settings)
     except (InvalidToken, ApiError) as exc:
+        await message.answer(str(exc))
+
+
+@router.message(Command("name"))
+async def change_name(message: Message, state: FSMContext):
+    if message.chat.type == "private":
+        await state.set_state(Registration.name)
+        await message.answer("Напишите фамилию и имя одним сообщением. Например: Петров Иван.")
+
+
+def valid_name(text: str) -> bool:
+    words = text.split()
+    return (
+        2 <= len(words) <= 5
+        and 3 <= len(text) <= 100
+        and all(char.isalpha() or char in " -'’" for char in text)
+        and all(any(c.isalpha() for c in word) for word in words)
+    )
+
+
+@router.message(Registration.name, F.text, ~F.text.startswith("/"))
+async def save_name(message: Message, backend: Backend, settings: Settings, state: FSMContext):
+    if message.chat.type != "private":
+        return
+    name = " ".join(message.text.split())
+    if not valid_name(name):
+        await message.answer("Нужны фамилия и имя буквами, например: Петров Иван. Код QR вводится после регистрации или через /review.")
+        return
+    try:
+        await backend.request("POST", "/internal/register", json={"telegram_id": message.from_user.id, "name": name})
+        await state.clear()
+        await message.answer(f"Готово, {name}! Ниже ваш персональный пропуск. /name — исправить имя.")
+        await send_qr(message, backend, settings)
+    except ApiError as exc:
         await message.answer(str(exc))
 
 

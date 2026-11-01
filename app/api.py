@@ -109,7 +109,7 @@ def create_app(settings: Settings | None = None):
 
     @app.post("/api/scan")
     def scan(body: ScanInput, actor: int = Depends(web_auth)):
-        return service.context_for(actor).scan(body.token)
+        return service.scan_for(actor, body.token)
 
     @app.post("/api/scan-photo")
     def scan_photo(body: PhotoInput, actor: int = Depends(web_auth)):
@@ -117,15 +117,19 @@ def create_app(settings: Settings | None = None):
             data = base64.b64decode(body.image_base64, validate=True)
         except ValueError as exc:
             raise InvalidToken("Не удалось прочитать файл") from exc
-        return service.context_for(actor).scan(read_qr(data))
+        return service.scan_for(actor, read_qr(data))
 
     @app.post("/api/guests/{guest_id}/check-in")
     def check_in(guest_id: UUID, actor: int = Depends(web_auth)):
-        return service.context_for(actor).check_in(guest_id, actor)
+        return service.check_in_for(guest_id, actor)
 
     @app.post("/internal/register", dependencies=[Depends(bot_auth)])
     def register(body: RegisterInput):
         return service.register(body.telegram_id, body.name)
+
+    @app.get("/internal/registration/{telegram_id}", dependencies=[Depends(bot_auth)])
+    def registration(telegram_id: int):
+        return service.registration_for(telegram_id)
 
     @app.get("/internal/pass/{telegram_id}", dependencies=[Depends(bot_auth)])
     def guest_pass(telegram_id: int):
@@ -133,11 +137,11 @@ def create_app(settings: Settings | None = None):
 
     @app.post("/internal/scan", dependencies=[Depends(bot_auth)])
     def bot_scan(body: BotScanInput):
-        return service.context_for(body.actor_id).scan(body.token)
+        return service.scan_for(body.actor_id, body.token)
 
     @app.post("/internal/guests/{guest_id}/check-in", dependencies=[Depends(bot_auth)])
     def bot_check_in(guest_id: UUID, body: ActorInput):
-        return service.context_for(body.actor_id).check_in(guest_id, body.actor_id)
+        return service.check_in_for(guest_id, body.actor_id)
 
     @app.get("/internal/access/{actor_id}", dependencies=[Depends(bot_auth)])
     def access(actor_id: int):

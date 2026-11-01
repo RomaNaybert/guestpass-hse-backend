@@ -25,6 +25,7 @@ values = {
     "CHECK_IN_POINTS": "10",
     "PASS_TTL_DAYS": "7",
     "PUBLIC_URL": public_url.rstrip("/"),
+    "REVIEW_ENABLED": "true",
     "API_URL": "http://api:8080",
     "COOKIE_SECURE": str(public_url.startswith("https://")).lower(),
 }

@@ -36,3 +36,30 @@ def test_image_without_qr_reports_error():
 def test_oversized_file_rejected():
     with pytest.raises(InvalidToken, match="большая"):
         read_qr(b"x" * (10 * 1024 * 1024 + 1))
+
+
+def test_branded_pass_survives_phone_size_and_telegram_jpeg():
+    from app.qr import make_pass_image
+
+    for number in range(5):
+        token = issue_pass(PassClaims(uuid4(), uuid4(), uuid4(), 9999999999), "x" * 32)
+        image_bytes = make_pass_image(token, "Анна Кузнецова", "Встреча Бизнес-клуба")
+        assert read_qr(image_bytes) == token
+        with Image.open(BytesIO(image_bytes)) as image:
+            image = image.convert("RGB").resize((540, 720))
+            compressed = BytesIO()
+            image.save(compressed, format="JPEG", quality=55)
+        assert read_qr(compressed.getvalue()) == token
+
+
+def test_multiple_passes_are_rejected():
+    first = make_qr("GP1.first")
+    second = make_qr("GP1.second")
+    with Image.open(BytesIO(first)) as a, Image.open(BytesIO(second)) as b:
+        combined = Image.new("RGB", (a.width + b.width + 40, max(a.height, b.height)), "white")
+        combined.paste(a, (0, 0))
+        combined.paste(b, (a.width + 40, 0))
+        out = BytesIO()
+        combined.save(out, format="PNG")
+    with pytest.raises(InvalidToken, match="несколько QR"):
+        read_qr(out.getvalue())
